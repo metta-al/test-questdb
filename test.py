@@ -16,47 +16,62 @@ from crypto.core import exch_symbol_from_name
 
 from simulator.utils import get_data_file
 
+DO_DOWNLOAD = True
+DO_WRITEDB = False
+
 DB_HOST = 'localhost'
 DB_PORT = 9009
 
-BUFFER=1024
+BUFFER=8192
 def db_ordersl2(entries, prepend=''):
     """
         Binance got weird issue where exch_time=0
     """
 
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((DB_HOST, DB_PORT))
+
+    def _close():
+        sock.shutdown(socket.SHUT_RDWR)
+        sock.close()
+
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect((DB_HOST, DB_PORT))
+        sock.sendall(('\n'.join([
+            f'orders_l2,{prepend} prc={p[1]},qty={p[2]},exch_time={p[0]*1.0} {int(t*1000):d}'
+            for t,p in entries if p[0]>10])).encode())
+        """
         for i in range(int(len(entries)/BUFFER)+1):
             partial = entries[i*BUFFER:(i+1)*BUFFER]
             sock.sendall(('\n'.join([
                 f'orders_l2,{prepend} prc={p[1]},qty={p[2]},exch_time={p[0]*1.0} {int(t*1000):d}'
                 for t,p in partial if p[0]>10])).encode())
             print(f'[LOG] {prepend} {len(partial)} rows ({i*BUFFER})')
+        """
     except BaseException as e:
-        sock.close()
+        _close()
         raise e
+    _close()
 
 def process_fn(sym, dte, numlvl=1):
     exchsymb = exch_symbol_from_name(sym)
     prepend = f'exchsymb={exchsymb.tech_name()}'
     print(f'[LOG] processing {prepend} for {dte}')
 
-    fname = (get_data_file(exchsymb, dte, 'book', allow_download=True))
+    fname = (get_data_file(exchsymb, dte, 'book', allow_download=DO_DOWNLOAD))
     level = [f'bid{i}' for i in range(numlvl)]
     level += [f'ask{i}' for i in range(numlvl)]
 
-    fullcols = ['exch_time']
-    for l in level:
-        fullcols.append(f'{l}_prc')
-        fullcols.append(f'{l}_qty')
-    data = pandas.read_parquet(fname, columns=fullcols)
+    if DO_WRITEDB:
+        fullcols = ['exch_time']
+        for l in level:
+            fullcols.append(f'{l}_prc')
+            fullcols.append(f'{l}_qty')
+        data = pandas.read_parquet(fname, columns=fullcols)
 
-    for lvl in level:
-        cols = ['exch_time', f'{lvl}_prc',f'{lvl}_qty']
-        db_ordersl2(list(zip(data.index.tolist(),
-            data[cols].values.tolist())), f'{prepend},property={lvl}')
+        for lvl in level:
+            cols = ['exch_time', f'{lvl}_prc',f'{lvl}_qty']
+            db_ordersl2(list(zip(data.index.tolist(),
+                data[cols].values.tolist())), f'{prepend},property={lvl}')
 
 def main():
     symbs = ([

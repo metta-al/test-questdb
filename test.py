@@ -1,12 +1,19 @@
 '''
 # actually dunnid also can
 CREATE TABLE IF NOT EXISTS orders_l2(
-    tstamp timestamp,
+    timestamp timestamp,
     exchsymb SYMBOL,
     property SYMBOL,
-    prc DOUBLE,
-    qty DOUBLE)
-TIMESTAMP(tstamp);
+    exch_time INT,
+    prc FLOAT,
+    qty FLOAT) partition by DAY;
+CREATE TABLE IF NOT EXISTS trades(
+    timestamp timestamp,
+    exchsymb SYMBOL,
+    exch_time DOUBLE,
+    maker_is_ask BOOLEAN,
+    prc FLOAT,
+    qty FLOAT) partition by DAY;
 '''
 
 import pandas
@@ -58,11 +65,11 @@ def process_fn(sym, dte, numlvl=1):
     print(f'[LOG] processing {prepend} for {dte}')
 
     fname = (get_data_file(exchsymb, dte, 'book', allow_download=DO_DOWNLOAD))
-    level = [f'bid{i}' for i in range(numlvl)]
-    level += [f'ask{i}' for i in range(numlvl)]
-
-    if DO_WRITEDB:
+    if DO_WRITEDB and fname:
         fullcols = ['exch_time']
+
+        level = [f'bid{i}' for i in range(numlvl)]
+        level += [f'ask{i}' for i in range(numlvl)]
         for l in level:
             fullcols.append(f'{l}_prc')
             fullcols.append(f'{l}_qty')
@@ -72,6 +79,11 @@ def process_fn(sym, dte, numlvl=1):
             cols = ['exch_time', f'{lvl}_prc',f'{lvl}_qty']
             db_ordersl2(list(zip(data.index.tolist(),
                 data[cols].values.tolist())), f'{prepend},property={lvl}')
+
+    fname = (get_data_file(exchsymb, dte, 'trade', allow_download=DO_DOWNLOAD))
+    if DO_WRITEDB and fname:
+        data = pandas.read_parquet(fname)
+        print(data)
 
 def main():
     symbs = ([

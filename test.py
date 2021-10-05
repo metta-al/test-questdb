@@ -1,17 +1,16 @@
 '''
-# actually dunnid also can
 CREATE TABLE IF NOT EXISTS orders_l2(
     timestamp timestamp,
     exchsymb SYMBOL,
     property SYMBOL,
-    exch_time INT,
+    exch_time FLOAT,
     prc FLOAT,
     qty FLOAT) partition by DAY;
 CREATE TABLE IF NOT EXISTS trades(
     timestamp timestamp,
+    exch_time INT,
     exchsymb SYMBOL,
-    exch_time DOUBLE,
-    maker_is_ask BOOLEAN,
+    side BOOLEAN,
     prc FLOAT,
     qty FLOAT) partition by DAY;
 '''
@@ -29,12 +28,8 @@ DO_WRITEDB = False
 DB_HOST = 'localhost'
 DB_PORT = 9009
 
-BUFFER=8192
-def db_ordersl2(entries, prepend=''):
-    """
-        Binance got weird issue where exch_time=0
-    """
-
+BUFFER=4096
+def db_send(entries):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect((DB_HOST, DB_PORT))
 
@@ -43,17 +38,10 @@ def db_ordersl2(entries, prepend=''):
         sock.close()
 
     try:
-        sock.sendall(('\n'.join([
-            f'orders_l2,{prepend} prc={p[1]},qty={p[2]},exch_time={p[0]*1.0} {int(t*1000):d}'
-            for t,p in entries if p[0]>10])).encode())
-        """
         for i in range(int(len(entries)/BUFFER)+1):
             partial = entries[i*BUFFER:(i+1)*BUFFER]
-            sock.sendall(('\n'.join([
-                f'orders_l2,{prepend} prc={p[1]},qty={p[2]},exch_time={p[0]*1.0} {int(t*1000):d}'
-                for t,p in partial if p[0]>10])).encode())
-            print(f'[LOG] {prepend} {len(partial)} rows ({i*BUFFER})')
-        """
+            sock.sendall(('\n'.join(partial)).encode())
+            print(f'[LOG] {len(partial)} rows, starting from {i*BUFFER}')
     except BaseException as e:
         _close()
         raise e
@@ -73,17 +61,26 @@ def process_fn(sym, dte, numlvl=1):
         for l in level:
             fullcols.append(f'{l}_prc')
             fullcols.append(f'{l}_qty')
-        data = pandas.read_parquet(fname, columns=fullcols)
+        data0 = pandas.read_parquet(fname, columns=fullcols)
 
         for lvl in level:
-            cols = ['exch_time', f'{lvl}_prc',f'{lvl}_qty']
-            db_ordersl2(list(zip(data.index.tolist(),
-                data[cols].values.tolist())), f'{prepend},property={lvl}')
+            data = data0[['exch_time', f'{lvl}_prc',f'{lvl}_qty']]
+
+            # binance has exch_time = 0
+            header=f'orders_l2,{prepend},property={lvl}'
+            db_send([f'{header} prc={p[1]},qty={p[2]},exch_time={p[0]*1.0} {int(t*1000):d}'
+                for t,p in list(zip(data.index.tolist(),data.values.tolist())) if p[0]>0])
 
     fname = (get_data_file(exchsymb, dte, 'trade', allow_download=DO_DOWNLOAD))
     if DO_WRITEDB and fname:
-        data = pandas.read_parquet(fname)
-        print(data)
+        pass
+        header=f'trades,{prepend},property={lvl}'
+        db_send([f'{header} prc={p[1]},qty={p[2]},exch_time={p[0]*1.0} {int(t*1000):d}'
+            for t,p in list(zip(data.index.tolist(),data.values.tolist())) if p[0]>0])
+        cols = ['exch_time','trd_prc','trd_qty','trd_side']
+    data = pandas.read_parquet(fname)
+    print(data.columns)
+    print(data['trd_side'])
 
 def main():
     symbs = ([

@@ -13,8 +13,14 @@ CREATE TABLE IF NOT EXISTS trades(
     side BOOLEAN,
     prc FLOAT,
     qty FLOAT) partition by DAY;
+
+128  rows - 31.53143286705017 20363386 1.5484376157801148e-06 
+1028 rows - 31.771186590194702 20363386 1.5602113808673421e-06
+4096 rows - 32.36903643608093 20363386 1.58957043961554e-06
+all  rows - 33.37786316871643 20363386 1.6391116471846298e-06
 '''
 
+import time
 import socket
 from datetime import datetime
 
@@ -26,7 +32,7 @@ from crypto.core import exch_symbol_from_name
 from simulator.utils import get_data_file
 
 DO_DOWNLOAD = True
-DO_WRITEDB = True 
+DO_WRITEDB = True
 
 DB_HOST = 'localhost'
 DB_PORT = 9009
@@ -36,7 +42,10 @@ DB_P_PORT = 8812
 DB_P_USER = 'admin'
 DB_P_PASS = 'quest'
 
-BUFFER=4096
+dbtime=0
+dbrows=0
+
+BUFFER=128
 def db_send(entries):
     header = entries[0].split(' ')[0]
     if db_rowsexist(header, entries):
@@ -51,11 +60,16 @@ def db_send(entries):
         sock.close()
 
     try:
+        stime = time.time()
         print(f'[LOG] {header} - {BUFFER} rows')
         for i in range(int(len(entries)/BUFFER)+1):
             partial = entries[i*BUFFER:(i+1)*BUFFER]+['']
             sock.sendall(('\n'.join(partial)).encode())
         print(f'[LOG] wrote {len(entries)} rows')
+
+        global dbtime, dbrows
+        dbtime += time.time()-stime
+        dbrows += len(entries)
     except BaseException as e:
         _close()
         raise e
@@ -95,7 +109,6 @@ def db_rowsexist(header, entries):
         if res: curr = res[0][0]
     except BaseException as e:
         print(f'[ERR] postgres db fails - {e}')
-    return True
     return curr == len(entries)
 
 def process_fn(sym, dte, numlvl=1):
@@ -156,6 +169,8 @@ def main():
         for d in dates:
             process_fn(s, d, 5)
     db_pg_close()
+
+    print(dbtime, dbrows, dbtime/dbrows)
 
 if __name__ == '__main__':
     main()

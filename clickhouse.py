@@ -39,15 +39,17 @@ DB_PORT = 8123
 dbtime=0
 dbrows=0
 
-BUFFER=128
+BUFFER=8192
 def db_send(entries, query=''):
     try:
         stime = time.time()
+        BUFFER = len(entries)+10
         print(f'[LOG] {entries[0]} - {BUFFER} rows')
         for i in range(int(len(entries)/BUFFER)+1):
             partial = entries[i*BUFFER:(i+1)*BUFFER]
-            requests.post(f'http://{DB_HOST}:{DB_PORT}/?query={urllib.parse.quote(query)}',
+            res = requests.post(f'http://{DB_HOST}:{DB_PORT}/?query={urllib.parse.quote(query)}',
                     ','.join(partial))
+            assert res.status_code == 200
         print(f'[LOG] wrote {len(entries)} rows')
 
         global dbtime, dbrows
@@ -122,7 +124,7 @@ def process_fn(sym, dte, numlvl=1):
                 # some binance has exch_time = 0
                 tstamps = data.index.tolist()
                 q = 'INSERT INTO orders_l2(exchsymb,property,prc,qty,exch_time,timestamp) VALUES'
-                db_send([f'("{exchsymb}","{lvl}",{p[1]},{p[2]},{int(p[0]*1000):d},{int(t*1000):d})'
+                db_send([f"('{exchsymb.tech_name()}','{lvl}',{p[1]},{p[2]},{int(p[0]*1000):d},{int(t*1000):d})"
                     for t,p in list(zip(tstamps,data.values.tolist()))], q)
 
     fname = (get_data_file(exchsymb, dte, 'trade', allow_download=DO_DOWNLOAD))
@@ -132,7 +134,7 @@ def process_fn(sym, dte, numlvl=1):
         else:
             data = pandas.read_parquet(fname, columns=['exch_time','trd_prc','trd_qty','trd_side'])
             q = 'INSERT INTO trades(exchsymb,prc,qty,side,exch_time,timestamp) VALUES'
-            db_send([f'("{exchsymb}",{p[1]},{p[2]},{1 if p[3]==1 else 0},{int(p[0]*1000):d},{int(t*1000):d})'
+            db_send([f"('{exchsymb.tech_name()}',{p[1]},{p[2]},{1 if p[3]==1 else 0},{int(p[0]*1000):d},{int(t*1000):d})"
                 for t,p in list(zip(tstamps,data.values.tolist()))], q)
 
 def main():
